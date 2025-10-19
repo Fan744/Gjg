@@ -9,7 +9,7 @@ from telegram.ext import (
     MessageHandler, ContextTypes, filters
 )
 
-BOT_TOKEN = "8031585414:AAENT7gEkiX7GvzFTbL8dGEhhYCECRiGZxM"
+BOT_TOKEN = "8313201920:AAH1PfXk6b6sgBPNCT_H5AEMAhZETItO5gg"
 REQUIRED_CHANNEL = "@team_black_hat_offical"
 PREMIUM_KEY = "786LEGNEDOLDHACKER"
 
