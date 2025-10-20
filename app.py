@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = "8313201920:AAH1PfXk6b6sgBPNCT_H5AEMAhZETItO5gg"
-REQUIRED_CHANNEL = "https://t.me/+RPxdDjp-wrw3NWZl"
+REQUIRED_CHANNEL = "https://t.me/kushwahaboomber"
 PREMIUM_KEY = "786LEGNEDOLDHACKER"
 
 logging.basicConfig(level=logging.INFO)
