@@ -9,8 +9,8 @@ from telegram.ext import (
     MessageHandler, ContextTypes, filters
 )
 
-BOT_TOKEN = "8313201920:AAH1PfXk6b6sgBPNCT_H5AEMAhZETItO5gg"
-REQUIRED_CHANNEL = "@meoujkreal"
+BOT_TOKEN = "8037281015:AAFkJ0Sp0IIRiFcg2ncZi481tppX505jYLE"
+REQUIRED_CHANNEL = "kushwahaboomber"
 PREMIUM_KEY = "786LEGNEDOLDHACKER"
 
 logging.basicConfig(level=logging.INFO)
