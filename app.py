@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # अपना BOT TOKEN यहाँ डालो
-TOKEN = 'YOUR_BOT_TOKEN_HERE'
+TOKEN = '7746673219:AAGfbNsG3Ray0lnaLzXlQ-mXQUkESh7Jp5E'
 bot = telebot.TeleBot(TOKEN)
 
 # Global
